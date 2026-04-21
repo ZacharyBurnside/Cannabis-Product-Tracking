@@ -1,55 +1,89 @@
 # Cannabis Market Analyzer
 
-A Plotly Dash analytics dashboard for the cannabis retail market, built on Leafly data. Tracks product inventory, revenue, pricing, discounts, and dispensary locations across multiple retailers — surfacing sales trends and market intelligence for the legal cannabis industry.
+A Plotly Dash analytics dashboard for the cannabis retail market, built on scraped Leafly data. Tracks product inventory, revenue, pricing, discounts, and dispensary locations across NYC-area retailers — surfacing sales trends and market intelligence for the legal cannabis industry.
 
 ---
 
 ## What It Does
 
-Connects to a SQLite database of scraped Leafly product and store data and renders an interactive multi-page dashboard with five analysis sections:
-
-| Section | What It Shows |
-|---|---|
-| **Overview** | Key metrics — total revenue, units sold, retailers tracked, best-selling product |
-| **Revenue Insights** | Daily and cumulative revenue over time |
-| **Stock Analysis** | Units sold per day, inventory turnover rate, restock frequency by product |
-| **Pricing Analysis** | Price distribution across products and categories |
-| **Discount Insights** | Discount ranges, most discounted products, promotional trends |
+1. **Scrapes** dispensary listings and product menus from Leafly's API on a recurring schedule
+2. **Infers sales** from inventory quantity changes between scrapes — when stock decreases, the difference is counted as units sold
+3. **Renders** a multi-page interactive dashboard with revenue, stock, pricing, and discount analytics
 
 ---
 
-## Features
+## Data Pipeline
 
-- **Dispensary map** — Folium map with custom retailer logos as markers, showing all tracked dispensary locations
-- **Revenue tracking** — Infers sales from inventory quantity changes over time (stock decrease = sale)
-- **Turnover rate** — Calculates inventory turnover per product to identify fast vs slow movers
-- **Discount analysis** — Tracks original vs current price, discount percentage, and discount frequency
-- **Daily/cumulative toggle** — All time-series charts switch between daily and cumulative views
-- **Product selector** — Filter stock and revenue charts by specific products
+```
+leafly_products_spider.py (run on schedule)
+        ↓
+Hits Leafly finder API → gets all dispensary slugs in NYC bounding box
+        ↓
+For each dispensary slug → hits menu API → gets all products with price + stock quantity
+        ↓
+Saves to leafly_products.db (SQLite) with timestamp — duplicates allowed for tracking
+        ↓
+cannabis.py dashboard
+        ↓
+Loads full history → calculates stock diffs → infers sales + revenue → renders charts
+```
+
+---
+
+## Scraper — `leafly_products_spider.py`
+
+Scrapes all dispensary product menus within a NYC bounding box.
+
+**How it works:**
+1. Calls Leafly's finder API to get all dispensary slugs in a geographic area
+2. For each dispensary, paginates through the full menu (18 items per page)
+3. Captures product name, category, brand, THC%, price, stock quantity, and image
+4. Saves every scrape as a new row — no deduplication, so quantity changes are trackable over time
+5. Includes exponential backoff retry logic for rate limiting (429 responses)
+
+**Fields captured:**
+- `product_id`, `product_name`, `category`, `subcategory`, `brand`
+- `thc_percentage`, `price`, `quantity`, `retailer_name`
+- `image_url`, `description`, `timestamp`
+
+---
+
+## Dashboard — `cannabis.py`
+
+Five-section analytics dashboard built on the accumulated scrape history:
+
+| Section | What It Shows |
+|---|---|
+| **Overview** | Total revenue, units sold, retailers tracked, best-selling product |
+| **Revenue Insights** | Daily and cumulative revenue over time (toggle) |
+| **Stock Analysis** | Units sold per day, turnover rate, restock frequency by product |
+| **Pricing Analysis** | Price distribution across products and categories |
+| **Discount Insights** | Discount ranges, most discounted products, promotional trends |
+
+Also includes a **Folium dispensary map** with retailer logos as custom markers.
 
 ---
 
 ## Tech Stack
 
-- **Python** — data pipeline and app logic
-- **Plotly Dash** — web dashboard framework
-- **Dash Bootstrap Components** — UI layout and styling
+- **Python** — scraper and dashboard logic
+- **Requests** — Leafly API calls with session management
+- **Plotly Dash + Dash Bootstrap Components** — web dashboard
 - **Pandas** — data processing and metric calculation
 - **Folium** — interactive dispensary map
-- **SQLite** — Leafly product and store database
+- **SQLite** — product history database
 
 ---
 
-## Data
+## Running the Scraper
 
-Data is sourced from Leafly via scraping and stored in SQLite:
+```bash
+pip install requests pandas
 
-| Table | Contents |
-|---|---|
-| `leafly_products` | Product name, price, quantity, retailer, timestamp — scraped over time |
-| `leafly_stores` | Dispensary name, location, coordinates, logo URL |
+python leafly_products_spider.py
+```
 
-Sales are inferred from inventory changes — when a product's quantity decreases between scrape timestamps, the difference is counted as units sold. Revenue is calculated as `units_sold × price`.
+Run this on a schedule (e.g. hourly via cron) to build up enough inventory history to infer sales.
 
 ---
 
@@ -61,6 +95,4 @@ pip install dash dash-bootstrap-components plotly pandas folium
 python cannabis.py
 ```
 
-Then open `http://localhost:8050` in your browser.
-
-The app expects a SQLite database at `/home/zburnside/leafly_products.db`. Update `db_path_A` in `cannabis.py` to point to your local database path.
+Open `http://localhost:8050`. Update `db_path_A` in `cannabis.py` to point to your local `leafly_products.db`.
